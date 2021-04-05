@@ -330,6 +330,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 
 	account_kernel_stack(ti, 1);
 
+	RB_CLEAR_NODE(&tsk->adj_node);
+
 	return tsk;
 
 out:
@@ -596,8 +598,9 @@ EXPORT_SYMBOL_GPL(__mmdrop);
 /*
  * Decrement the use count and release all resources for an mm.
  */
-void mmput(struct mm_struct *mm)
+int mmput(struct mm_struct *mm)
 {
+	int mm_freed = 0;
 	might_sleep();
 
 	if (atomic_dec_and_test(&mm->mm_users)) {
@@ -615,7 +618,9 @@ void mmput(struct mm_struct *mm)
 		if (mm->binfmt)
 			module_put(mm->binfmt->module);
 		mmdrop(mm);
+		mm_freed = 1;
 	}
+	return mm_freed;
 }
 EXPORT_SYMBOL_GPL(mmput);
 
@@ -1092,6 +1097,10 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	sig->has_child_subreaper = current->signal->has_child_subreaper ||
 				   current->signal->is_child_subreaper;
 
+#ifdef CONFIG_ANDROID_LMK_ADJ_RBTREE
+	RB_CLEAR_NODE(&sig->adj_node);
+#endif
+
 	mutex_init(&sig->cred_guard_mutex);
 
 	return 0;
@@ -1507,6 +1516,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 			attach_pid(p, PIDTYPE_SID, task_session(current));
 			list_add_tail(&p->sibling, &p->real_parent->children);
 			list_add_tail_rcu(&p->tasks, &init_task.tasks);
+			add_2_adj_tree(p);
 			__this_cpu_inc(process_counts);
 		} else {
 			current->signal->nr_threads++;
